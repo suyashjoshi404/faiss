@@ -49,6 +49,12 @@ void HNSWStats::combine_atomic(const HNSWStats& other) {
     detail::atomic_fetch_add_relaxed(n2, other.n2);
     detail::atomic_fetch_add_relaxed(ndis, other.ndis);
     detail::atomic_fetch_add_relaxed(nhops, other.nhops);
+    for (int level = 0; level < max_stats_levels; ++level) {
+        detail::atomic_fetch_add_relaxed(
+                ndis_per_level_[level], other.ndis_per_level_[level]);
+        detail::atomic_fetch_add_relaxed(
+                nhops_per_level_[level], other.nhops_per_level_[level]);
+    }
 }
 
 /**************************************************************
@@ -433,7 +439,7 @@ void hnsw_search(
             efSearch = hnsw_params->efSearch;
         }
     }
-    size_t n1 = 0, n2 = 0, ndis = 0, nhops = 0;
+    HNSWStats total_stats;
     size_t n_rabitq_1bit = 0, n_rabitq_refine = 0;
 
     idx_t check_period = InterruptCallback::get_period_hint(
@@ -446,6 +452,7 @@ void hnsw_search(
 
 #pragma omp parallel if (i1 - i0 > 1)
         {
+            HNSWStats thread_stats;
             VisitedTable* vt = nullptr;
             std::unique_ptr<typename BlockResultHandler::SingleResultHandler>
                     res;
@@ -460,9 +467,7 @@ void hnsw_search(
                 omp_capture_exception(ex, [&] { interrupt = true; });
             }
 
-#pragma omp for reduction(                                               \
-                + : n1, n2, ndis, nhops, n_rabitq_1bit, n_rabitq_refine) \
-        schedule(guided)
+#pragma omp for reduction(+ : n_rabitq_1bit, n_rabitq_refine) schedule(guided)
             for (idx_t i = i0; i < i1; i++) {
                 if (interrupt.load(std::memory_order_relaxed)) {
                     continue;
@@ -480,10 +485,7 @@ void hnsw_search(
                     // state before this thread starts processing queries.
                     HNSWStats stats =
                             hnsw.search(*dis, index, *res, *vt, params);
-                    n1 += stats.n1;
-                    n2 += stats.n2;
-                    ndis += stats.ndis;
-                    nhops += stats.nhops;
+                    thread_stats.combine(stats);
                     if (rq) {
                         n_rabitq_1bit += rq->stats.n_1bit;
                         n_rabitq_refine += rq->stats.n_refine;
@@ -493,13 +495,15 @@ void hnsw_search(
                     omp_capture_exception(ex, [&] { interrupt = true; });
                 }
             }
+#pragma omp critical
+            { total_stats.combine(thread_stats); }
         }
         omp_rethrow_if_exception(ex);
         InterruptCallback::check();
     }
 
     if (get_search_stats_enabled()) {
-        hnsw_stats.combine_atomic({n1, n2, ndis, nhops});
+        hnsw_stats.combine_atomic(total_stats);
         rabitq_stats.add_atomic({n_rabitq_1bit, n_rabitq_refine});
     }
 }
@@ -1134,7 +1138,7 @@ void IndexHNSW2Level::search(
         IndexHNSW::search(n, x, k, distances, labels);
 
     } else { // "mixed" search
-        size_t n1 = 0, n2 = 0, ndis = 0, nhops = 0;
+        HNSWStats total_stats;
 
         const IndexIVFPQ* index_ivfpq =
                 dynamic_cast<const IndexIVFPQ*>(storage);
@@ -1164,6 +1168,7 @@ void IndexHNSW2Level::search(
         std::atomic<bool> interrupt{false};
 #pragma omp parallel
         {
+            HNSWStats thread_stats;
             // visited table (not hash set) for tri-state flags.
             std::unique_ptr<VisitedTable> vt;
             std::unique_ptr<DistanceComputer> dis;
@@ -1177,7 +1182,7 @@ void IndexHNSW2Level::search(
                 omp_capture_exception(ex, [&] { interrupt = true; });
             }
 
-#pragma omp for reduction(+ : n1, n2, ndis, nhops)
+#pragma omp for
             for (idx_t i = 0; i < n; i++) {
                 if (interrupt.load(std::memory_order_relaxed)) {
                     continue;
@@ -1226,10 +1231,7 @@ void IndexHNSW2Level::search(
                             search_stats,
                             0,
                             k);
-                    n1 += search_stats.n1;
-                    n2 += search_stats.n2;
-                    ndis += search_stats.ndis;
-                    nhops += search_stats.nhops;
+                    thread_stats.combine(search_stats);
 
                     vt->advance();
                     vt->advance();
@@ -1239,11 +1241,13 @@ void IndexHNSW2Level::search(
                     omp_capture_exception(ex, [&] { interrupt = true; });
                 }
             }
+#pragma omp critical
+            { total_stats.combine(thread_stats); }
         }
         omp_rethrow_if_exception(ex);
 
         if (get_search_stats_enabled()) {
-            hnsw_stats.combine_atomic({n1, n2, ndis, nhops});
+            hnsw_stats.combine_atomic(total_stats);
         }
     }
 }
@@ -1399,7 +1403,7 @@ void IndexHNSWCagra::range_search(
 
     auto run = [&]<class C>() {
         const HNSW& hnsw = this->hnsw;
-        size_t n1 = 0, n2 = 0, ndis = 0, nhops = 0;
+        HNSWStats total_stats;
         RangeSearchPartialResult pres(result);
 
         for (idx_t i = 0; i < n; i++) {
@@ -1436,10 +1440,7 @@ void IndexHNSWCagra::range_search(
             HNSWStats stats;
             hnsw.search_level_0(
                     *dis, res, 1, &nearest, &nearest_d, 1, stats, vt, params);
-            n1 += stats.n1;
-            n2 += stats.n2;
-            ndis += stats.ndis;
-            nhops += stats.nhops;
+            total_stats.combine(stats);
         }
 
         pres.set_lims();
@@ -1447,7 +1448,7 @@ void IndexHNSWCagra::range_search(
         pres.copy_result();
 
         if (get_search_stats_enabled()) {
-            hnsw_stats.combine_atomic({n1, n2, ndis, nhops});
+            hnsw_stats.combine_atomic(total_stats);
         }
     };
 

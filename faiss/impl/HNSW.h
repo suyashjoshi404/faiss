@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <array>
 #include <functional>
 #include <optional>
 #include <queue>
@@ -297,16 +298,46 @@ void hnsw_add_vertices_deterministic(
                 set_query);
 
 struct HNSWStats {
+    static constexpr int max_stats_levels = 64;
+
     size_t n1 = 0; /// number of vectors searched
     size_t n2 =
             0; /// number of queries for which the candidate list is exhausted
     size_t ndis = 0;  /// number of distances computed
     size_t nhops = 0; /// number of hops aka number of edges traversed
 
+    HNSWStats(
+            size_t n1 = 0,
+            size_t n2 = 0,
+            size_t ndis = 0,
+            size_t nhops = 0)
+            : n1(n1), n2(n2), ndis(ndis), nhops(nhops) {}
+
+    void add_level_stats(int level, size_t ndis, size_t nhops) {
+        if (level >= 0 && level < max_stats_levels) {
+            ndis_per_level_[level] += ndis;
+            nhops_per_level_[level] += nhops;
+        }
+    }
+
+    size_t get_ndis_at_level(int level) const {
+        return level >= 0 && level < max_stats_levels
+                ? ndis_per_level_[level]
+                : 0;
+    }
+
+    size_t get_nhops_at_level(int level) const {
+        return level >= 0 && level < max_stats_levels
+                ? nhops_per_level_[level]
+                : 0;
+    }
+
     void reset() {
         n1 = n2 = 0;
         ndis = 0;
         nhops = 0;
+        ndis_per_level_.fill(0);
+        nhops_per_level_.fill(0);
     }
 
     void combine(const HNSWStats& other) {
@@ -314,9 +345,17 @@ struct HNSWStats {
         n2 += other.n2;
         ndis += other.ndis;
         nhops += other.nhops;
+        for (int level = 0; level < max_stats_levels; ++level) {
+            ndis_per_level_[level] += other.ndis_per_level_[level];
+            nhops_per_level_[level] += other.nhops_per_level_[level];
+        }
     }
 
     void combine_atomic(const HNSWStats& other);
+
+   private:
+    std::array<size_t, max_stats_levels> ndis_per_level_{};
+    std::array<size_t, max_stats_levels> nhops_per_level_{};
 };
 
 // global var that collects them all

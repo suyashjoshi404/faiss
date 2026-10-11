@@ -767,6 +767,7 @@ HNSWStats greedy_update_nearest_impl(
         // update stats
         stats.ndis += ndis;
         stats.nhops += 1;
+        stats.add_level_stats(level, ndis, 1);
 
         if (nearest == prev_nearest) {
             return stats;
@@ -1233,6 +1234,7 @@ int search_from_candidates_fixVT(
         }
         stats.ndis += ndis;
         stats.nhops += nstep;
+        stats.add_level_stats(0, ndis, nstep);
     }
 
     return nres;
@@ -1545,6 +1547,7 @@ int hnsw_detail::search_from_candidates_panorama(
         }
         stats.ndis += ndis;
         stats.nhops += nstep;
+        stats.add_level_stats(0, ndis, nstep);
     }
 
     indexPanorama_stats.add(local_pano_stats);
@@ -1697,6 +1700,7 @@ TopCandidatesQueue<C> search_from_candidate_unbounded_fixVT(
         }
 
         stats.nhops += 1;
+        stats.add_level_stats(0, 0, 1);
     }
 
     ++stats.n1;
@@ -1704,6 +1708,7 @@ TopCandidatesQueue<C> search_from_candidate_unbounded_fixVT(
         ++stats.n2;
     }
     stats.ndis += ndis;
+    stats.add_level_stats(0, ndis, 0);
 
     if (sel) {
         return selected_candidates;

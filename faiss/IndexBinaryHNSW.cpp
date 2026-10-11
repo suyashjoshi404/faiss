@@ -97,15 +97,16 @@ void IndexBinaryHNSW::search(
     using RH = HeapBlockResultHandler<HNSW::C>;
     RH bres(n, distances_f, labels, k);
 
-    size_t n1 = 0, n2 = 0, ndis = 0, nhops = 0;
+    HNSWStats total_stats;
 
 #pragma omp parallel
     {
+        HNSWStats thread_stats;
         std::unique_ptr<VisitedTable> vt = VisitedTable::create(ntotal);
         std::unique_ptr<DistanceComputer> dis(get_distance_computer());
         RH::SingleResultHandler res(bres);
 
-#pragma omp for reduction(+ : n1, n2, ndis, nhops)
+#pragma omp for
         for (idx_t i = 0; i < n; i++) {
             res.begin(i);
             dis->set_query((float*)(x + i * code_size));
@@ -114,16 +115,15 @@ void IndexBinaryHNSW::search(
             // search function, as it is merely there to enable Panorama
             // execution for IndexHNSWFlatPanorama.
             HNSWStats stats = hnsw.search(*dis, nullptr, res, *vt, params_in);
-            n1 += stats.n1;
-            n2 += stats.n2;
-            ndis += stats.ndis;
-            nhops += stats.nhops;
+            thread_stats.combine(stats);
             res.end();
         }
+#pragma omp critical
+        { total_stats.combine(thread_stats); }
     }
 
     if (get_search_stats_enabled()) {
-        hnsw_stats.combine_atomic({n1, n2, ndis, nhops});
+        hnsw_stats.combine_atomic(total_stats);
     }
 
 #pragma omp parallel for
