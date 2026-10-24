@@ -2,6 +2,7 @@
 """Build a vanilla FAISS HNSW index for SIFT or Enron."""
 
 import argparse
+import csv
 import os
 import time
 from pathlib import Path
@@ -66,6 +67,7 @@ def parse_args():
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--data-file")
     parser.add_argument("--index-file")
+    parser.add_argument("--performance-output")
     parser.add_argument(
         "--force", action="store_true", help="Replace an existing index file"
     )
@@ -86,6 +88,9 @@ def main():
 
     faiss.omp_set_num_threads(args.threads)
     print(f"Loading {args.dataset} base vectors from {data_file}...")
+    # Match the SHG runner: build timing covers loading the base vectors,
+    # index allocation, and graph insertion. Saving the index is excluded.
+    start = time.perf_counter()
     xb = load_base_vectors(args.dataset, data_file)
     count, dimension = xb.shape
 
@@ -96,17 +101,34 @@ def main():
     )
     index = faiss.IndexHNSWFlat(dimension, args.M, faiss.METRIC_L2)
     index.hnsw.efConstruction = args.ef_construction
-
-    start = time.perf_counter()
     index.add(xb)
     elapsed = time.perf_counter() - start
 
     os.makedirs(os.path.dirname(os.path.abspath(index_file)), exist_ok=True)
     faiss.write_index(index, index_file)
 
+    performance_file = args.performance_output or str(
+        EXPERIMENT_DIR / "observations" / f"{args.dataset}_hnsw_performance.csv"
+    )
+    os.makedirs(os.path.dirname(os.path.abspath(performance_file)), exist_ok=True)
+    write_header = not os.path.exists(performance_file) or os.path.getsize(performance_file) == 0
+    with open(performance_file, "a", newline="") as handle:
+        fields = ["dataset", "algorithm", "phase", "count", "dimension", "M",
+                  "ef_construction", "ef_search", "k", "threads", "seconds",
+                  "average_latency_us", "queries_per_second", "recall_at_k",
+                  "shortcut_build_seconds"]
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        if write_header:
+            writer.writeheader()
+        writer.writerow({"dataset": args.dataset, "algorithm": "hnsw", "phase": "build",
+                         "count": count, "dimension": dimension, "M": args.M,
+                         "ef_construction": args.ef_construction, "threads": args.threads,
+                         "seconds": f"{elapsed:.8f}"})
+
     levels = faiss.vector_to_array(index.hnsw.levels)
     num_layers = int(index.hnsw.max_level) + 1
     print(f"Index built in {elapsed:.2f}s and saved to {index_file}")
+    print(f"Build performance recorded in {performance_file}")
     print(f"Entry point: {index.hnsw.entry_point}")
     print(f"Number of layers: {num_layers}")
     for layer in range(num_layers):

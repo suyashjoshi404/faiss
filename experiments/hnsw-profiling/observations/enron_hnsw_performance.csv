@@ -1,0 +1,3 @@
+dataset,algorithm,phase,count,dimension,M,ef_construction,ef_search,k,threads,seconds,average_latency_us,queries_per_second,recall_at_k,shortcut_build_seconds
+enron,hnsw,build,94987,1369,32,128,,,1,85.81550501,,,,
+enron,hnsw,search,200,1369,32,,64,10,1,0.11707332,585.3666,1708.3311,0.97250000,

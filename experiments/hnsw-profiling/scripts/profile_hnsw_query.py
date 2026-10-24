@@ -68,6 +68,8 @@ def parse_args():
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--index-file")
     parser.add_argument("--output")
+    parser.add_argument("--performance-output")
+    parser.add_argument("--layer-averages-output")
     parser.add_argument("--warmup", type=int, default=500)
     return parser.parse_args()
 
@@ -144,6 +146,33 @@ def main():
     elapsed = time.perf_counter() - start
     batch_hops = int(faiss.cvar.hnsw_stats.nhops)
     batch_ndis = int(faiss.cvar.hnsw_stats.ndis)
+    batch_recall = np.mean(
+        [
+            recall_at_k(batch_labels[i], groundtruth[i], args.k)
+            for i in range(num_queries)
+        ]
+    )
+
+    performance_file = args.performance_output or str(
+        EXPERIMENT_DIR / "observations" / f"{args.dataset}_hnsw_performance.csv"
+    )
+    os.makedirs(os.path.dirname(os.path.abspath(performance_file)), exist_ok=True)
+    write_header = not os.path.exists(performance_file) or os.path.getsize(performance_file) == 0
+    with open(performance_file, "a", newline="") as handle:
+        fields = ["dataset", "algorithm", "phase", "count", "dimension", "M",
+                  "ef_construction", "ef_search", "k", "threads", "seconds",
+                  "average_latency_us", "queries_per_second", "recall_at_k",
+                  "shortcut_build_seconds"]
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        if write_header:
+            writer.writeheader()
+        writer.writerow({"dataset": args.dataset, "algorithm": "hnsw", "phase": "search",
+                         "count": num_queries, "dimension": index.d, "M": args.M,
+                         "ef_search": args.ef_search, "k": args.k, "threads": args.threads,
+                         "seconds": f"{elapsed:.8f}",
+                         "average_latency_us": f"{elapsed / num_queries * 1e6:.4f}",
+                         "queries_per_second": f"{num_queries / elapsed:.4f}",
+                         "recall_at_k": f"{batch_recall:.8f}"})
 
     fieldnames = [
         "dataset",
@@ -199,20 +228,42 @@ def main():
                     }
                 )
 
-    batch_recall = np.mean(
-        [
-            recall_at_k(batch_labels[i], groundtruth[i], args.k)
-            for i in range(num_queries)
-        ]
+    layer_averages_file = args.layer_averages_output or str(
+        EXPERIMENT_DIR / "observations" / f"{args.dataset}_hnsw_layer_averages.csv"
     )
+    os.makedirs(os.path.dirname(os.path.abspath(layer_averages_file)), exist_ok=True)
+    write_header = (
+        not os.path.exists(layer_averages_file)
+        or os.path.getsize(layer_averages_file) == 0
+    )
+    with open(layer_averages_file, "a", newline="") as handle:
+        fields = ["dataset", "algorithm", "M", "ef_search", "k", "num_queries",
+                  "layer", "nodes_on_layer", "average_hops", "average_distance_computations",
+                  "recall_at_k", "queries_per_second"]
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        if write_header:
+            writer.writeheader()
+        for layer in range(num_layers):
+            writer.writerow({
+                "dataset": args.dataset, "algorithm": "hnsw", "M": args.M,
+                "ef_search": args.ef_search, "k": args.k, "num_queries": num_queries,
+                "layer": layer, "nodes_on_layer": nodes_per_layer[layer],
+                "average_hops": f"{layer_hop_totals[layer] / num_queries:.8f}",
+                "average_distance_computations": f"{layer_ndis_totals[layer] / num_queries:.8f}",
+                "recall_at_k": f"{batch_recall:.8f}",
+                "queries_per_second": f"{num_queries / elapsed:.4f}",
+            })
+
     print("=" * 64)
     print(f"Batch search time:          {elapsed:.6f} s")
+    print(f"Search performance recorded in {performance_file}")
     print(f"Average latency:            {elapsed / num_queries * 1e6:.2f} us/query")
     print(f"Queries/sec:                {num_queries / elapsed:.2f}")
     print(f"Average total hops:         {batch_hops / num_queries:.2f}")
     print(f"Average distance comps:     {batch_ndis / num_queries:.2f}")
     print(f"Recall@{args.k}:                 {batch_recall:.6f}")
     print("Per-layer averages:")
+    print(f"Per-layer averages CSV:     {layer_averages_file}")
     for layer in range(num_layers):
         print(
             f"  layer {layer}: hops={layer_hop_totals[layer] / num_queries:.2f}, "

@@ -21,7 +21,7 @@ controls whenever results will be compared.
   least five times, and report the median plus a spread such as min/max or
   interquartile range. Do not compare a single run.
 
-## This machine
+## Our setup
 
 The following topology was observed on this host:
 
@@ -53,12 +53,12 @@ Use these commands for the standard single-thread build and search:
 ```bash
 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   numactl --physcpubind=2 --membind=0 \
-  python3 experiments/hnsw-profiling/scripts/build_sift_index.py \
+  python3 experiments/hnsw-profiling/scripts/build_hnsw_index.py \
   --dataset sift --M 32 --ef-construction 128 --threads 1
 
 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 \
   numactl --physcpubind=2 --membind=0 \
-  python3 experiments/hnsw-profiling/scripts/profile_sift_query.py \
+  python3 experiments/hnsw-profiling/scripts/profile_hnsw_query.py \
   --dataset sift --M 32 --k 10 --ef-search 64 --threads 1
 ```
 
@@ -70,7 +70,7 @@ threads and leave their siblings `50-53` unused:
 OMP_PROC_BIND=true OMP_PLACES=cores OMP_NUM_THREADS=4 \
   OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   numactl --physcpubind=2-5 --membind=0 \
-  python3 experiments/hnsw-profiling/scripts/profile_sift_query.py \
+  python3 experiments/hnsw-profiling/scripts/profile_hnsw_query.py \
   --dataset sift --M 32 --k 10 --ef-search 64 --threads 4
 ```
 

@@ -1,0 +1,3 @@
+dataset,algorithm,phase,count,dimension,M,ef_construction,ef_search,k,threads,seconds,average_latency_us,queries_per_second,recall_at_k,shortcut_build_seconds
+sift,shg,build,1000000,128,32,128,,,,792.42258777,,,,0.96124387
+sift,shg,search,10000,128,32,128,64,10,1,4.10363774,410.36377350,2436.86227824,0.96589000,
